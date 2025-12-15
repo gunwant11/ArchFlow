@@ -6,6 +6,7 @@ import { Play, Settings, Loader2, Image as ImageIcon, X, Camera, Sun } from 'luc
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { uploadImage } from '@/app/actions/upload';
 import { Slider } from '@/components/ui/slider';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 
@@ -52,20 +53,29 @@ const LIGHTING_TYPES = [
 export const InputGenerationNode = memo(({ data, selected }: NodeProps<Node<InputNodeData>>) => {
   const [localPrompt, setLocalPrompt] = useState(data.prompt || '');
 
+
+  const [isUploading, setIsUploading] = useState(false);
+
   const handlePromptBlur = () => {
     if (data.onPromptChange) {
       data.onPromptChange(localPrompt);
     }
   };
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && data.onAddReferenceImage) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        data.onAddReferenceImage?.(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        setIsUploading(true);
+        const formData = new FormData();
+        formData.append('file', file);
+        const url = await uploadImage(formData);
+        data.onAddReferenceImage(url);
+      } catch (error) {
+        console.error('Failed to upload image:', error);
+      } finally {
+        setIsUploading(false);
+      }
     }
     e.target.value = '';
   };
@@ -152,14 +162,29 @@ export const InputGenerationNode = memo(({ data, selected }: NodeProps<Node<Inpu
               ))}
             </div>
           ) : (
-            <label className="flex flex-col items-center justify-center w-full aspect-[4/3] rounded-md border text-white/20 border-white/10 border-dashed bg-[#0F1115] hover:bg-[#15171B] hover:text-white/40 hover:border-white/20 transition-all cursor-pointer">
-              <ImageIcon className="w-8 h-8 mb-2 opacity-50" />
-              <span className="text-[10px] font-medium">Upload Reference Image</span>
+            <label className={cn(
+              "flex flex-col items-center justify-center w-full aspect-[4/3] rounded-md border border-dashed bg-[#0F1115] transition-all cursor-pointer",
+              isUploading 
+                ? "border-blue-500/50 cursor-wait" 
+                : "text-white/20 border-white/10 hover:bg-[#15171B] hover:text-white/40 hover:border-white/20"
+            )}>
+              {isUploading ? (
+                <>
+                  <Loader2 className="w-8 h-8 mb-2 animate-spin text-blue-500" />
+                  <span className="text-[10px] font-medium text-blue-500">Uploading...</span>
+                </>
+              ) : (
+                <>
+                  <ImageIcon className="w-8 h-8 mb-2 opacity-50" />
+                  <span className="text-[10px] font-medium">Upload Reference Image</span>
+                </>
+              )}
               <input 
                 type="file" 
                 className="hidden" 
                 accept="image/*"
                 onChange={handleImageUpload}
+                disabled={isUploading}
               />
             </label>
           )}

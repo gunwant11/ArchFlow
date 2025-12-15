@@ -4,6 +4,7 @@ import { fal } from "@fal-ai/client";
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import { uploadToR2 } from '@/lib/r2';
 
 // --- Scene Rendering Types & Logic ---
 
@@ -15,10 +16,13 @@ interface RenderRequestBody {
   variants?: number;
   aspect_ratio?: string;
   guidance_scale?: number;
+  image_url?: string | null;
+  structured_prompt?: Record<string, unknown>;
 }
 
 interface RenderResponseBody {
   images: string[];
+  structuredPrompts?: Record<string, any>[];
   requestId?: string;
 }
 
@@ -44,7 +48,9 @@ export async function renderScene(body: RenderRequestBody): Promise<RenderRespon
             seed: seed + index,
             steps_num: stepsNum,
             aspect_ratio: aspectRatio,
-            guidance_scale: guidanceScale
+            guidance_scale: guidanceScale,
+            image_url: body.image_url ?? null,
+            structured_prompt: body.structured_prompt
           },
           logs: true,
           onQueueUpdate: (update) => {
@@ -73,8 +79,33 @@ export async function renderScene(body: RenderRequestBody): Promise<RenderRespon
              throw new Error('No image URL in Fal response');
         }
 
+        try {
+          // Download image from Fal
+          const imageResponse = await fetch(imageUrl);
+          if (!imageResponse.ok) {
+             console.error(`Failed to download image from Fal: ${imageResponse.status} ${imageResponse.statusText}`);
+             // Fallback to original URL if download fails (though likely won't work well if temporary)
+          } else {
+             const arrayBuffer = await imageResponse.arrayBuffer();
+             const buffer = Buffer.from(arrayBuffer);
+             
+             // Upload to R2
+             // Use requestId and index for unique key
+             const key = `generations/${result.requestId || Date.now()}-${index}.png`;
+             // Assume PNG for now or check header
+             const contentType = imageResponse.headers.get('content-type') || 'image/png';
+             
+             const r2Url = await uploadToR2(buffer, key, contentType);
+             imageUrl = r2Url;
+          }
+        } catch (uploadError) {
+          console.error('Failed to upload Fal image to R2:', uploadError);
+          // If upload fails, we still return the Fal URL (better than nothing)
+        }
+
         return {
           imageUrl,
+          structuredPrompt: data.structured_prompt,
           requestId: result.requestId,
         };
 
@@ -86,6 +117,7 @@ export async function renderScene(body: RenderRequestBody): Promise<RenderRespon
 
     const results = await Promise.all(imagePromises);
     const images = results.map((r) => r.imageUrl).filter(Boolean);
+    const structuredPrompts = results.map((r) => r.structuredPrompt).filter(Boolean);
     const requestId = results[0]?.requestId;
 
     if (images.length === 0) {
@@ -94,6 +126,7 @@ export async function renderScene(body: RenderRequestBody): Promise<RenderRespon
 
     return { 
       images,
+      structuredPrompts: structuredPrompts.length > 0 ? structuredPrompts : undefined,
       ...(requestId && { requestId }),
     };
   } catch (error) {

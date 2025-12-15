@@ -11,6 +11,7 @@ export type OutputNodeData = {
   label: string;
   imageUrl?: string;
   config?: Record<string, any>;
+  structuredPrompt?: Record<string, any>;
   generationTime?: string;
 };
 

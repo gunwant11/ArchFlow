@@ -136,7 +136,11 @@ export function NodeCanvas() {
     if (!inputNode || inputNode.type !== 'inputNode') return;
 
     const inputData = inputNode.data as InputNodeData;
-    if (!inputData.prompt?.trim()) {
+    const inputPrompt = inputData.prompt?.trim();
+    
+    // Only require prompt if it's NOT a refine node (refine can just be "make it brighter")
+    // But usually prompt is needed.
+    if (!inputPrompt) {
       alert('Please enter a prompt');
       return;
     }
@@ -178,6 +182,30 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
         referenceImages: inputData.referenceImages,
       };
 
+      // Detect Refine Context: Check for incoming edge from an OutputNode to this InputNode's reference handle
+      const refineEdge = useProjectStore.getState().edges.find(     
+        e => e.target === nodeId && e.targetHandle === 'reference'
+      );
+      
+      let previousStructuredPrompt: Record<string, any> | undefined;
+      let previousImageUrl: string | undefined;
+
+      if (refineEdge) {
+        const sourceNode = useProjectStore.getState().nodes.find(n => n.id === refineEdge.source);
+        if (sourceNode && sourceNode.type === 'outputNode') {
+           const outputData = sourceNode.data as OutputNodeData;
+           previousStructuredPrompt = outputData.structuredPrompt;
+           previousImageUrl = outputData.imageUrl;
+        }
+      }
+      
+      // Fallback: If no edge but referenceImages exists, try to use first one as image_url
+      // providing it's just one Refine. But ideally we rely on the edge for structuredPrompt.
+      if (!previousImageUrl && hasReferences && inputData.referenceImages) {
+          previousImageUrl = inputData.referenceImages[0];
+          // We won't have structuredPrompt in this loose case unless we found the node.
+      }
+
       // Step 1: Generate JSON from prompt
       const jsonPromptData = await generateSceneJson({
           type: hasReferences ? 'refine' : 'generate',
@@ -194,6 +222,8 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
           seed: Math.floor(Math.random() * 10000),
           steps: 50,
           variants: numberOfOutputs,
+          image_url: previousImageUrl,
+          structured_prompt: previousStructuredPrompt,
       });
 
       const generatedImages = renderData.images || [];
@@ -264,6 +294,7 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
                   data: {
                     ...node.data,
                     imageUrl: generatedImages[nodeIndex],
+                    structuredPrompt: renderData.structuredPrompts?.[nodeIndex],
                     generationTime: new Date().toLocaleTimeString(),
                   },
                 };
