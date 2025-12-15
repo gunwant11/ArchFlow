@@ -129,6 +129,7 @@ export async function getProjectSettings(id: string) {
     // We can reuse getProject logic or fetch specific fields
     try {
         const session = await getServerSession(authOptions);
+        console.log('Session:', session);
         if (!session?.user?.id) {
             throw new Error('Unauthorized');
         }
@@ -141,9 +142,11 @@ export async function getProjectSettings(id: string) {
                 interiorStyle: true,
                 materials: true,
                 cameraAngle: true,
-                lighting: true
+                lighting: true,
+                canvasState: true
             }
         });
+        console.log('Project Settings:', project);
 
         if (!project) return null;
         if (project.userId !== session.user.id) throw new Error('Unauthorized');
@@ -168,12 +171,16 @@ export async function getProjectSettings(id: string) {
             },
           };
 
+
+ 
+
         return {
           colorPalette: project.colorPalette || defaults.colorPalette,
           interiorStyle: project.interiorStyle || defaults.interiorStyle,
           materials: project.materials || defaults.materials,
           cameraAngle: project.cameraAngle || defaults.cameraAngle,
           lighting: project.lighting || defaults.lighting,
+          canvasState: project.canvasState || []
         };
 
     } catch (error) {
@@ -182,55 +189,4 @@ export async function getProjectSettings(id: string) {
     }
 }
 
-export async function saveProjectVersion(projectId: string, versionData: {
-  name: string;
-  type: string;
-  imageUrl: string;
-  configJson: any;
-  parentId: string | null;
-}) {
-  try {
-    const session = await getServerSession(authOptions);
-    if (!session?.user?.id) throw new Error('Unauthorized');
 
-    // Fetch existing project to get current canvasState
-    const project = await db.query.projects.findFirst({
-        where: eq(projects.id, projectId),
-    });
-
-    if (!project) throw new Error('Project not found');
-    if (project.userId !== session.user.id) throw new Error('Unauthorized');
-
-    // Create new version object
-    const newVersion = {
-      id: crypto.randomUUID(),
-      parentId: versionData.parentId,
-      imageUrl: versionData.imageUrl,
-      configJson: versionData.configJson,
-      name: versionData.name,
-      type: versionData.type,
-      createdAt: new Date().toISOString(),
-    };
-
-    // Update canvasState
-    // Assuming canvasState has a 'versions' array or similar based on usage
-    // If canvasState is null, init it.
-    const currentCanvasState = (project.canvasState as any) || { versions: [] };
-    const versions = Array.isArray(currentCanvasState.versions) ? currentCanvasState.versions : [];
-    
-    const updatedCanvasState = {
-        ...currentCanvasState,
-        versions: [...versions, newVersion]
-    };
-
-    await db
-      .update(projects)
-      .set({ canvasState: updatedCanvasState })
-      .where(eq(projects.id, projectId));
-
-    return newVersion;
-  } catch (error) {
-    console.error('Error saving project version:', error);
-    throw new Error('Failed to save project version');
-  }
-}

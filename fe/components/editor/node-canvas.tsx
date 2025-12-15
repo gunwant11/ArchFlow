@@ -23,7 +23,7 @@ import { useParams } from 'next/navigation';
 import { Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { generateSceneJson, renderScene } from '@/app/actions/scene';
-import { saveProjectVersion } from '@/app/actions/project';
+
 
 const nodeTypes = {
   inputNode: InputGenerationNode,
@@ -34,8 +34,7 @@ export function NodeCanvas() {
   const params = useParams();
   const projectId = params?.id as string;
   const { 
-    versions, 
-    currentVersionId, 
+ 
     startGeneration, 
     finishGeneration, 
     isGenerating, 
@@ -184,7 +183,7 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
           type: hasReferences ? 'refine' : 'generate',
           prompt: enhancedPrompt,
           json_prompt: generationConfig,
-          parent_id: currentVersionId,
+          parent_id: null,
       });
 
       const jsonData = jsonPromptData;
@@ -236,22 +235,28 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
       setNodeCounter(prev => prev + numberOfOutputs);
 
       // Add skeleton nodes and edges first
-      setNodes((nds) => [
-        ...nds.map((node) =>
+      const nodesWithSkeleton = [
+        ...nodesRef.current.map((node) =>
           node.id === nodeId
             ? { ...node, data: { ...node.data, isGenerating: false } }
             : node
         ),
         ...newOutputNodes,
-      ]);
+      ];
+      const edgesWithSkeleton = [...edges, ...newEdges];
 
-      setEdges((eds) => [...eds, ...newEdges]);
+      setNodes(nodesWithSkeleton);
+      setEdges(edgesWithSkeleton);
+      
+      // Explicitly sync to store and save immediately
+      useProjectStore.getState().setNodes(nodesWithSkeleton);
+      useProjectStore.getState().setEdges(edgesWithSkeleton);
+      saveCanvasState();
 
       // Step 4: Update output nodes with generated images
       if (generatedImages.length > 0) {
         setTimeout(() => {
-          setNodes((nds) =>
-            nds.map((node) => {
+          const finalNodes = nodesWithSkeleton.map((node) => {
               const nodeIndex = newOutputNodes.findIndex(n => n.id === node.id);
               if (nodeIndex >= 0 && nodeIndex < generatedImages.length) {
                 return {
@@ -264,53 +269,34 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
                 };
               }
               return node;
-            })
-          );
+            });
+
+          setNodes(finalNodes);
+          
+          // Sync and Save again with images
+          useProjectStore.getState().setNodes(finalNodes);
+          saveCanvasState();
         }, 300); // Small delay for visual effect
       }
 
-      // Save to database
-      if (projectId) {
-        for (const imageUrl of generatedImages) {
-          await saveProjectVersion(projectId, {
-              name: `${inputData.prompt.substring(0, 30)}`,
-              type: 'node-generation',
-              imageUrl: imageUrl,
-              configJson: jsonData.json_prompt,
-              parentId: currentVersionId,
-          });
-        }
-      }
+
 
       // Update store with first image
-      finishGeneration({
-        id: Date.now().toString(),
-        parentId: currentVersionId,
-        imageUrl: generatedImages[0],
-        config: jsonData.json_prompt,
-        name: `Generated from ${inputData.label}`,
-        type: 'node-generation',
-      });
+      finishGeneration();
     } catch (error) {
       console.error('Generation failed:', error);
       alert(`Generation failed: ${(error as Error).message}`);
       
       // Reset node state
-      setNodes((nds) =>
-        nds.map((node) =>
+      const resetNodes = nodesRef.current.map((node) =>
           node.id === nodeId
             ? { ...node, data: { ...node.data, isGenerating: false } }
             : node
-        )
-      );
-      finishGeneration({
-        id: '',
-        parentId: null,
-        imageUrl: '',
-        config: {},
-        name: '',
-        type: '',
-      });
+        );
+      setNodes(resetNodes);
+      useProjectStore.getState().setNodes(resetNodes);
+      
+      finishGeneration();
     }
   };
 

@@ -1,11 +1,9 @@
 'use server';
 
-import runpodSdk from 'runpod-sdk';
+import { fal } from "@fal-ai/client";
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-
-const { RUNPOD_API_KEY, ENDPOINT_ID } = process.env;
 
 // --- Scene Rendering Types & Logic ---
 
@@ -26,93 +24,58 @@ interface RenderResponseBody {
 
 export async function renderScene(body: RenderRequestBody): Promise<RenderResponseBody> {
   try {
-    if (!RUNPOD_API_KEY || !ENDPOINT_ID) {
-      throw new Error('RunPod API configuration missing');
-    }
-
     if (!body.json_prompt) {
       throw new Error('Missing required field "json_prompt".');
     }
 
     const variants = body.variants && body.variants > 0 ? body.variants : 1;
-    const seed = body.seed ?? 5555;
+    const seed = body.seed ?? 2771;
     const stepsNum = body.steps ?? 50;
     const aspectRatio = body.aspect_ratio ?? '1:1';
     const guidanceScale = body.guidance_scale ?? 5;
 
-    // Initialize RunPod SDK
-    const runpod = runpodSdk(RUNPOD_API_KEY);
-    const endpoint = runpod.endpoint(ENDPOINT_ID);
-
-    if (!endpoint) {
-      throw new Error('Failed to initialize RunPod endpoint');
-    }
-
-    // RunPod doesn't inherently support batch generation in one request often, 
-    // but the previous fal implementation did parallel requests.
-    // We will do parallel requests to RunPod for variants.
-    
     const imagePromises = Array.from({ length: variants }, async (_, index) => {
       try {
-        const promptString = JSON.stringify(body.json_prompt);
-        
-        // Construct configuration for RunPod
-        const inputPayload = {
-          json_prompt: body.json_prompt,
-          seed: seed + index,
-          num_inference_steps: stepsNum, // Common mapping, might need adjustment based on endpoint
-          aspect_ratio: aspectRatio,
-          guidance_scale: guidanceScale,
-          lora: body.lora,
-        };
+        console.log(`[Fal] Submitting variant ${index + 1}/${variants}`);
 
-        console.log(`[RunPod] Submitting variant ${index + 1}/${variants} with prompt length:`, promptString.length);
-
-        const jobSubmission = await endpoint.run({
-          input: inputPayload,
+        const result = await fal.subscribe("bria/fibo/generate", {
+          input: {
+            prompt: JSON.stringify(body.json_prompt),
+            seed: seed + index,
+            steps_num: stepsNum,
+            aspect_ratio: aspectRatio,
+            guidance_scale: guidanceScale
+          },
+          logs: true,
+          onQueueUpdate: (update) => {
+            if (update.status === "IN_PROGRESS") {
+              update.logs.map((log) => log.message).forEach(console.log);
+            }
+          },
         });
 
-        const { id: jobId } = jobSubmission;
-        if (!jobId) {
-          throw new Error('Failed to submit job to RunPod');
+        console.log(result.data);
+        console.log(result.requestId);
+
+        // Extract image URL from result.data
+        // Assuming typical Fal response handling
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = result.data as any;
+        let imageUrl: string | undefined;
+
+        if (data.images && Array.isArray(data.images) && data.images.length > 0) {
+            imageUrl = data.images[0].url;
+        } else if (data.image) {
+            imageUrl = data.image.url;
         }
-
-        // Poll for completion
-        let attempts = 0;
-        const maxAttempts = 120; // Wait longer for rendering
-        let jobStatus: any;
-
-        while (attempts < maxAttempts) {
-          jobStatus = await endpoint.status(jobId);
-          
-          if (jobStatus.status === 'COMPLETED') {
-            break;
-          } else if (jobStatus.status === 'FAILED') {
-            throw new Error(`RunPod job failed: ${jobStatus.error}`);
-          }
-
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          attempts++;
-        }
-
-        if (attempts >= maxAttempts) {
-          throw new Error('Job timed out');
-        }
-
-        const imageUrl = jobStatus?.output?.image_url || jobStatus?.output?.url;
 
         if (!imageUrl) {
-            // Fallback: sometimes output is the URL string itself or inside an array
-             if (typeof jobStatus?.output === 'string' && jobStatus.output.startsWith('http')) {
-                 return { imageUrl: jobStatus.output, requestId: jobId };
-             }
-             console.error('[RunPod] Invalid output format:', jobStatus);
-             throw new Error('No image URL in RunPod response');
+             throw new Error('No image URL in Fal response');
         }
 
         return {
           imageUrl,
-          requestId: jobId,
+          requestId: result.requestId,
         };
 
       } catch (error) {

@@ -3,15 +3,7 @@ import { Node, Edge } from '@xyflow/react';
 import { getProject, updateProject } from '@/app/actions/project';
 
 // Types
-export type Version = {
-  id: string;
-  parentId: string | null;
-  imageUrl: string;
-  config: any;
-  name: string;
-  type: string;
-  createdAt?: Date;
-};
+
 
 export type GenerationNode = {
   id: string;
@@ -39,10 +31,7 @@ export type GlobalSettings = {
 };
 
 type State = {
-  currentVersionId: string | null;
-  versions: Version[]; // Flat list of all versions
-  isGenerating: boolean;
-  activeBranchPath: string[]; // IDs of the path from Root -> Current
+
   
   // Node-based state
   nodes: Node[];
@@ -52,10 +41,9 @@ type State = {
   globalSettings: GlobalSettings;
   
   // Actions
-  setVersions: (versions: Version[]) => void;
-  selectVersion: (id: string) => void;
+  isGenerating: boolean;
   startGeneration: () => void;
-  finishGeneration: (newVersion: Version) => void;
+  finishGeneration: () => void;
   
   // Node actions
   setNodes: (nodes: Node[]) => void;
@@ -74,11 +62,9 @@ type State = {
 };
 
 export const useProjectStore = create<State>((set, get) => ({
+
   projectId: null,
-  currentVersionId: null,
-  versions: [],
   isGenerating: false,
-  activeBranchPath: [],
   nodes: [],
   edges: [],
   
@@ -129,26 +115,9 @@ export const useProjectStore = create<State>((set, get) => ({
     }
   },
 
-  setVersions: (versions) => set({ versions }),
-  
-  selectVersion: (id) => {
-    // Calculate path from root to this node for UI highlighting
-    const path = calculatePathToRoot(id, get().versions);
-    set({ currentVersionId: id, activeBranchPath: path });
-  },
-
   startGeneration: () => set({ isGenerating: true }),
   
-  finishGeneration: (newVersion) => set((state) => {
-    const updatedVersions = [...state.versions, newVersion];
-    const path = calculatePathToRoot(newVersion.id, updatedVersions);
-    return {
-      versions: updatedVersions,
-      currentVersionId: newVersion.id,
-      activeBranchPath: path,
-      isGenerating: false
-    };
-  }),
+  finishGeneration: () => set({ isGenerating: false }),
   
   // Node management
   setNodes: (nodes) => set({ nodes }),
@@ -184,14 +153,6 @@ export const useProjectStore = create<State>((set, get) => ({
   },
 }));
 
-// Helper: Backtrack up the tree
-function calculatePathToRoot(startId: string, allVersions: Version[]): string[] {
-  const path = [startId];
-  let current = allVersions.find(v => v.id === startId);
-  while (current && current.parentId) {
-    path.unshift(current.parentId);
-    current = allVersions.find(v => v.id === current?.parentId);
-  }
-  return path;
-}
+
+
 
