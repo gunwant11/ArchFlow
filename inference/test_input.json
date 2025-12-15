@@ -1,0 +1,22 @@
+{
+  "input": {
+    "json_prompt": {
+      "short_description": "A serene mountain landscape at sunset",
+      "style_medium": "photography",
+      "artistic_style": "realistic",
+      "lighting": "golden hour",
+      "color_palette": "warm tones",
+      "composition": "rule of thirds",
+      "camera_angle": "eye level",
+      "mood": "peaceful",
+      "subject": "mountain landscape",
+      "background": "sky with clouds"
+    },
+    "seed": 42,
+    "steps": 50,
+    "variants": 1,
+    "aspect_ratio": "16:9",
+    "guidance_scale": 5.0,
+    "negative_prompt": ""
+  }
+}
