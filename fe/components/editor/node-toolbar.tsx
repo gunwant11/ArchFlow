@@ -4,6 +4,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Slider } from '@/components/ui/slider';
 import { useProjectStore } from '@/store/use-project-store';
+import { COLOR_PALETTES, INTERIOR_STYLES, MATERIALS } from '@/lib/constants';
 
 type Tool = 'select' | 'add' | 'pan';
 
@@ -13,45 +14,7 @@ type NodeToolbarProps = {
   onAddNode: () => void;
 };
 
-// Constants moved from 
-const COLOR_PALETTES = [
-  {
-    name: 'Nordic',
-    colors: { primary: '#2C3E50', secondary: '#ECF0F1', accent: '#3498DB', neutral: '#95A5A6', highlight: '#E74C3C' }
-  },
-  {
-    name: 'Warm Earth',
-    colors: { primary: '#8B4513', secondary: '#F5DEB3', accent: '#CD853F', neutral: '#DEB887', highlight: '#D2691E' }
-  },
-  {
-    name: 'Modern Gray',
-    colors: { primary: '#2F2F2F', secondary: '#E8E8E8', accent: '#4A4A4A', neutral: '#C0C0C0', highlight: '#1A1A1A' }
-  },
-  {
-    name: 'Ocean Breeze',
-    colors: { primary: '#006994', secondary: '#E0F2F7', accent: '#00BCD4', neutral: '#B0BEC5', highlight: '#0097A7' }
-  },
-  {
-    name: 'Sunset',
-    colors: { primary: '#FF6B6B', secondary: '#FFE66D', accent: '#FF8C42', neutral: '#FFA07A', highlight: '#FF4757' }
-  },
-];
 
-const INTERIOR_STYLES = [
-  { id: 'scandi', label: 'Scandinavian', icon: '🏔️' },
-  { id: 'japandi', label: 'Japandi', icon: '🎋' },
-  { id: 'industrial', label: 'Industrial', icon: '🏭' },
-  { id: 'modern', label: 'Modern', icon: '✨' },
-  { id: 'boho', label: 'Bohemian', icon: '🌺' },
-];
-
-const MATERIALS = [
-  { id: 'wood', label: 'Wood', icon: '🪵' },
-  { id: 'metal', label: 'Metal', icon: '⚙️' },
-  { id: 'glass', label: 'Glass', icon: '💎' },
-  { id: 'concrete', label: 'Concrete', icon: '🧱' },
-  { id: 'fabric', label: 'Fabric', icon: '🧵' },
-];
 
 export function NodeToolbar({ activeTool, onToolChange, onAddNode }: NodeToolbarProps) {
   const { globalSettings, updateGlobalSettings } = useProjectStore();

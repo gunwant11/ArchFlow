@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { Node, Edge } from '@xyflow/react';
+import { getProject, updateProject } from '@/app/actions/project';
 
 // Types
 export type Version = {
@@ -101,13 +102,9 @@ export const useProjectStore = create<State>((set, get) => ({
     if (!projectId) return;
 
     try {
-      await fetch(`/api/projects/${projectId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          canvasState: { nodes, edges },
-        }),
-      });
+      await updateProject(projectId, {
+        canvasState: { nodes, edges },
+      } as any);
     } catch (error) {
       console.error('Failed to save canvas state:', error);
     }
@@ -115,14 +112,13 @@ export const useProjectStore = create<State>((set, get) => ({
 
   loadCanvasState: async (id: string) => {
     try {
-      const response = await fetch(`/api/projects/${id}`);
-      if (!response.ok) throw new Error('Failed to load project');
+      const project = await getProject(id);
       
-      const project = await response.json();
-      if (project.canvasState) {
+      if (project && project.canvasState) {
+        const state = project.canvasState as any;
         set({ 
-          nodes: project.canvasState.nodes || [], 
-          edges: project.canvasState.edges || [],
+          nodes: state.nodes || [], 
+          edges: state.edges || [],
           projectId: id 
         });
       } else {
@@ -175,18 +171,15 @@ export const useProjectStore = create<State>((set, get) => ({
   saveSettingsToDB: async (projectId: string) => {
     try {
       const { globalSettings } = get();
-      const response = await fetch(`/api/projects/${projectId}/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(globalSettings),
-      });
+      await updateProject(projectId, {
+        colorPalette: globalSettings.colorPalette,
+        interiorStyle: globalSettings.interiorStyle, 
+        materials: globalSettings.materials,
+      } as any);
       
-      if (!response.ok) {
-        throw new Error('Failed to save settings');
-      }
     } catch (error) {
       console.error('Error saving settings to database:', error);
-      throw error; // Re-throw to handle in UI
+      throw error; 
     }
   },
 }));

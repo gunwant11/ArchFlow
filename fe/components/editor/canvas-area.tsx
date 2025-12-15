@@ -9,6 +9,8 @@ import { Loader2, ChevronUp, ChevronDown, Code, Wand2, X } from 'lucide-react';
 import { JsonPanel } from './json-panel';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { generateSceneJson, renderScene } from '@/app/actions/scene';
+import { saveProjectVersion } from '@/app/actions/project';
 
 export function CanvasArea() {
   const params = useParams();
@@ -21,6 +23,8 @@ export function CanvasArea() {
   const currentVersion = versions.find(v => v.id === currentVersionId);
   const currentConfig = currentVersion?.config || {};
 
+
+
   const handleRefine = async () => {
     if (!refinePrompt.trim() || !currentVersionId || !projectId) return;
 
@@ -29,64 +33,35 @@ export function CanvasArea() {
 
     try {
       // Step 1: Generate JSON from prompt
-      const jsonResponse = await fetch('/api/scene/generate-json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+
+      const jsonPromptData = await generateSceneJson({
           type: 'refine',
           prompt: refinePrompt,
           json_prompt: currentConfig,
           parent_id: currentVersionId,
-        }),
       });
 
-      if (!jsonResponse.ok) {
-        const errorData = await jsonResponse.json();
-        throw new Error(errorData.error || 'Failed to generate JSON');
-      }
-
-      const jsonData = await jsonResponse.json();
+      const jsonData = jsonPromptData; // Response structure matches
 
       // Step 2: Render image from JSON
-      const renderResponse = await fetch('/api/scene/render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const renderData = await renderScene({
           json_prompt: jsonData.json_prompt,
           seed: Math.floor(Math.random() * 10000),
           steps: 50,
           variants: 1,
-        }),
       });
 
-      if (!renderResponse.ok) {
-        const errorData = await renderResponse.json();
-        throw new Error(errorData.error || 'Failed to render image');
-      }
-
-      const renderData = await renderResponse.json();
-
-      // Step 3: Save version to database
-      const versionResponse = await fetch(`/api/projects/${projectId}/versions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      // Step 3: Save version to database via server action
+      const savedVersion = await saveProjectVersion(projectId, {
           name: `Refined: ${refinePrompt.substring(0, 30)}${refinePrompt.length > 30 ? '...' : ''}`,
           type: 'refine',
           imageUrl: renderData.images[0],
           configJson: jsonData.json_prompt,
           parentId: currentVersionId,
-        }),
       });
 
-      if (!versionResponse.ok) {
-        const errorData = await versionResponse.json();
-        throw new Error(errorData.error || 'Failed to save version');
-      }
-
-      const savedVersion = await versionResponse.json();
-
       // Step 4: Update store with new version
+      // The savedVersion returned from action should match structure needed by store
       const newVersion = {
         id: savedVersion.id,
         parentId: savedVersion.parentId,

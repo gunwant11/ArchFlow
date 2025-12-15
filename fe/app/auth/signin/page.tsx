@@ -5,10 +5,12 @@ import { useSearchParams } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { LogIn } from 'lucide-react';
 
-export default function SignInPage() {
+import { Suspense } from 'react';
+
+function SignInContent() {
   const searchParams = useSearchParams();
-  const callbackUrl = searchParams.get('callbackUrl') || '/';
-  const error = searchParams.get('error');
+  const callbackUrl = searchParams?.get('callbackUrl') || '/';
+  const error = searchParams?.get('error');
 
   const handleGoogleSignIn = () => {
     signIn('google', { callbackUrl });
@@ -59,6 +61,14 @@ export default function SignInPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <SignInContent />
+    </Suspense>
   );
 }
 

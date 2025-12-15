@@ -1,7 +1,145 @@
-import { NextResponse } from 'next/server';
+'use server';
+
+import runpodSdk from 'runpod-sdk';
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+
+const { RUNPOD_API_KEY, ENDPOINT_ID } = process.env;
+
+// --- Scene Rendering Types & Logic ---
+
+interface RenderRequestBody {
+  json_prompt: Record<string, unknown>;
+  lora?: string;
+  seed?: number;
+  steps?: number;
+  variants?: number;
+  aspect_ratio?: string;
+  guidance_scale?: number;
+}
+
+interface RenderResponseBody {
+  images: string[];
+  requestId?: string;
+}
+
+export async function renderScene(body: RenderRequestBody): Promise<RenderResponseBody> {
+  try {
+    if (!RUNPOD_API_KEY || !ENDPOINT_ID) {
+      throw new Error('RunPod API configuration missing');
+    }
+
+    if (!body.json_prompt) {
+      throw new Error('Missing required field "json_prompt".');
+    }
+
+    const variants = body.variants && body.variants > 0 ? body.variants : 1;
+    const seed = body.seed ?? 5555;
+    const stepsNum = body.steps ?? 50;
+    const aspectRatio = body.aspect_ratio ?? '1:1';
+    const guidanceScale = body.guidance_scale ?? 5;
+
+    // Initialize RunPod SDK
+    const runpod = runpodSdk(RUNPOD_API_KEY);
+    const endpoint = runpod.endpoint(ENDPOINT_ID);
+
+    if (!endpoint) {
+      throw new Error('Failed to initialize RunPod endpoint');
+    }
+
+    // RunPod doesn't inherently support batch generation in one request often, 
+    // but the previous fal implementation did parallel requests.
+    // We will do parallel requests to RunPod for variants.
+    
+    const imagePromises = Array.from({ length: variants }, async (_, index) => {
+      try {
+        const promptString = JSON.stringify(body.json_prompt);
+        
+        // Construct configuration for RunPod
+        const inputPayload = {
+          json_prompt: body.json_prompt,
+          seed: seed + index,
+          num_inference_steps: stepsNum, // Common mapping, might need adjustment based on endpoint
+          aspect_ratio: aspectRatio,
+          guidance_scale: guidanceScale,
+          lora: body.lora,
+        };
+
+        console.log(`[RunPod] Submitting variant ${index + 1}/${variants} with prompt length:`, promptString.length);
+
+        const jobSubmission = await endpoint.run({
+          input: inputPayload,
+        });
+
+        const { id: jobId } = jobSubmission;
+        if (!jobId) {
+          throw new Error('Failed to submit job to RunPod');
+        }
+
+        // Poll for completion
+        let attempts = 0;
+        const maxAttempts = 120; // Wait longer for rendering
+        let jobStatus: any;
+
+        while (attempts < maxAttempts) {
+          jobStatus = await endpoint.status(jobId);
+          
+          if (jobStatus.status === 'COMPLETED') {
+            break;
+          } else if (jobStatus.status === 'FAILED') {
+            throw new Error(`RunPod job failed: ${jobStatus.error}`);
+          }
+
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          attempts++;
+        }
+
+        if (attempts >= maxAttempts) {
+          throw new Error('Job timed out');
+        }
+
+        const imageUrl = jobStatus?.output?.image_url || jobStatus?.output?.url;
+
+        if (!imageUrl) {
+            // Fallback: sometimes output is the URL string itself or inside an array
+             if (typeof jobStatus?.output === 'string' && jobStatus.output.startsWith('http')) {
+                 return { imageUrl: jobStatus.output, requestId: jobId };
+             }
+             console.error('[RunPod] Invalid output format:', jobStatus);
+             throw new Error('No image URL in RunPod response');
+        }
+
+        return {
+          imageUrl,
+          requestId: jobId,
+        };
+
+      } catch (error) {
+        console.error(`Error generating variant ${index + 1}:`, error);
+        throw error;
+      }
+    });
+
+    const results = await Promise.all(imagePromises);
+    const images = results.map((r) => r.imageUrl).filter(Boolean);
+    const requestId = results[0]?.requestId;
+
+    if (images.length === 0) {
+      throw new Error('Failed to generate any images');
+    }
+
+    return { 
+      images,
+      ...(requestId && { requestId }),
+    };
+  } catch (error) {
+    console.error('Error in renderScene:', error);
+    throw new Error(error instanceof Error ? error.message : 'Unknown error');
+  }
+}
+
+// --- Scene JSON Generation Types & Logic ---
 
 type GenerateJsonType =
   | 'floor plan image'
@@ -89,16 +227,10 @@ function buildSystemPrompt(input: GenerateJsonRequestBody, type: GenerateJsonTyp
   ].join('\n');
 }
 
-
-export async function POST(req: Request) {
+export async function generateSceneJson(body: GenerateJsonRequestBody): Promise<GenerateJsonResponseBody> {
   try {
-    const body = (await req.json()) as GenerateJsonRequestBody;
-
     if (!body.type) {
-      return NextResponse.json(
-        { error: 'Missing required field "type".' },
-        { status: 400 }
-      );
+      throw new Error('Missing required field "type".');
     }
 
     const client = getGenAIClient();
@@ -171,21 +303,9 @@ export async function POST(req: Request) {
       json_prompt: validated.json_prompt || {},
     };
 
-    return NextResponse.json(response);
+    return response;
   } catch (error) {
-    console.error('Error in /api/scene/generate-json:', error);
-
-    return NextResponse.json(
-      {
-        error: 'Failed to generate scene JSON',
-        details:
-          process.env.NODE_ENV === 'development'
-            ? (error as Error).message
-            : undefined,
-      },
-      { status: 500 }
-    );
+    console.error('Error in generateSceneJson:', error);
+    throw new Error(error instanceof Error ? error.message : 'Unknown error');
   }
 }
-
-

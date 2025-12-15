@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import {
   ReactFlow,
   Background,
@@ -20,8 +20,10 @@ import { OutputGenerationNode, OutputNodeData } from './output-generation-node';
 import { NodeToolbar } from './node-toolbar';
 import { useProjectStore } from '@/store/use-project-store';
 import { useParams } from 'next/navigation';
-import { Plus } from 'lucide-react';
+import { Plus, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { generateSceneJson, renderScene } from '@/app/actions/scene';
+import { saveProjectVersion } from '@/app/actions/project';
 
 const nodeTypes = {
   inputNode: InputGenerationNode,
@@ -44,71 +46,25 @@ export function NodeCanvas() {
   } = useProjectStore();
   const [activeTool, setActiveTool] = useState<'select' | 'add' | 'pan'>('select');
   
+  const [isCanvasLoading, setIsCanvasLoading] = useState(true);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<InputNodeData | OutputNodeData>>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [nodeCounter, setNodeCounter] = useState(1);
+  const nodesRef = useRef(nodes);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
   // Set project ID and load state on mount
   useEffect(() => {
     if (projectId) {
-      loadCanvasState(projectId);
+      setIsCanvasLoading(true);
+      loadCanvasState(projectId).finally(() => {
+          setIsCanvasLoading(false);
+      });
     }
   }, [projectId, loadCanvasState]);
-  
-  // Initialize with sample nodes
-  const [initialNodes] = useState<Node<InputNodeData | OutputNodeData>[]>(() => [
-    {
-      id: crypto.randomUUID(),
-      type: 'inputNode',
-      position: { x: 100, y: 150 },
-      data: {
-        label: 'Input Node 1',
-        prompt: 'A modern living room with minimalist furniture',
-        numberOfOutputs: 2,
-        viewType: '3d',
-        cameraAngle: { position: 'eye-level', fov: 75 },
-        lighting: { type: 'natural', intensity: 80 },
-        referenceImages: [],
-        // Handlers will need to be attached/updated dynamically since ID changes
-        // But actually, we define handlers inline here which capture the ID.
-        // However, these handlers are static in the array. 
-        // When we use `crypto.randomUUID()`, the ID is frozen for this instance.
-        // We need to make sure the handlers use the SAME id.
-        // Let's extract the ID first.
-      },
-    },
-  ]);
-  
-  // We need to fix the handlers in the initial state to use the dynamic ID.
-  // Better approach:
-  const [initialId] = useState(() => crypto.randomUUID());
-  
-  const initialNodesWithHandlers: Node<InputNodeData | OutputNodeData>[] = [
-    {
-      id: initialId,
-      type: 'inputNode',
-      position: { x: 100, y: 150 },
-      data: {
-        label: 'Input Node 1',
-        prompt: 'A modern living room with minimalist furniture',
-        numberOfOutputs: 2,
-        viewType: '3d',
-        cameraAngle: { position: 'eye-level', fov: 75 },
-        lighting: { type: 'natural', intensity: 80 },
-        referenceImages: [],
-        onRun: () => handleRunInputNode(initialId),
-        onPromptChange: (prompt) => updateNodeData(initialId, { prompt }),
-        onAddReferenceImage: (image) => addNodeReferenceImage(initialId, image),
-        onRemoveReferenceImage: (index) => removeNodeReferenceImage(initialId, index),
-        onOutputsChange: (count) => updateNodeData(initialId, { numberOfOutputs: count }),
-        onViewTypeChange: (type) => updateNodeData(initialId, { viewType: type }),
-        onCameraChange: (camera) => updateNodeData(initialId, { cameraAngle: camera }),
-        onLightingChange: (lighting) => updateNodeData(initialId, { lighting: lighting }),
-      },
-    },
-  ];
-
-  const initialEdges: Edge[] = [];
-
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodesWithHandlers);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
-  const [nodeCounter, setNodeCounter] = useState(1);
 
   const onConnect = useCallback(
     (params: Connection) => {
@@ -174,8 +130,10 @@ export function NodeCanvas() {
     );
   };
 
+
+
   const handleRunInputNode = async (nodeId: string) => {
-    const inputNode = nodes.find(n => n.id === nodeId);
+    const inputNode = nodesRef.current.find(n => n.id === nodeId);
     if (!inputNode || inputNode.type !== 'inputNode') return;
 
     const inputData = inputNode.data as InputNodeData;
@@ -222,40 +180,23 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
       };
 
       // Step 1: Generate JSON from prompt
-      const jsonResponse = await fetch('/api/scene/generate-json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const jsonPromptData = await generateSceneJson({
           type: hasReferences ? 'refine' : 'generate',
           prompt: enhancedPrompt,
           json_prompt: generationConfig,
           parent_id: currentVersionId,
-        }),
       });
 
-      if (!jsonResponse.ok) {
-        throw new Error('Failed to generate JSON configuration');
-      }
-
-      const jsonData = await jsonResponse.json();
+      const jsonData = jsonPromptData;
 
       // Step 2: Render images from JSON (request numberOfOutputs variants)
-      const renderResponse = await fetch('/api/scene/render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const renderData = await renderScene({
           json_prompt: jsonData.json_prompt,
           seed: Math.floor(Math.random() * 10000),
           steps: 50,
           variants: numberOfOutputs,
-        }),
       });
 
-      if (!renderResponse.ok) {
-        throw new Error('Failed to render images');
-      }
-
-      const renderData = await renderResponse.json();
       const generatedImages = renderData.images || [];
 
       // Step 3: Create output nodes immediately with skeleton state
@@ -331,16 +272,12 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
       // Save to database
       if (projectId) {
         for (const imageUrl of generatedImages) {
-          await fetch(`/api/projects/${projectId}/versions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
+          await saveProjectVersion(projectId, {
               name: `${inputData.prompt.substring(0, 30)}`,
               type: 'node-generation',
               imageUrl: imageUrl,
               configJson: jsonData.json_prompt,
               parentId: currentVersionId,
-            }),
           });
         }
       }
@@ -395,8 +332,28 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
 
   useEffect(() => {
     if (storeNodes.length > 0 && JSON.stringify(storeNodes) !== JSON.stringify(nodes)) {
-      setNodes(storeNodes as Node<InputNodeData | OutputNodeData>[]);
-      // ... rest of effect
+      const hydratedNodes = storeNodes.map((node) => {
+        if (node.type === 'inputNode') {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              onRun: () => handleRunInputNode(node.id),
+              onPromptChange: (prompt: string) => updateNodeData(node.id, { prompt }),
+              onAddReferenceImage: (image: string) => addNodeReferenceImage(node.id, image),
+              onRemoveReferenceImage: (index: number) => removeNodeReferenceImage(node.id, index),
+              onOutputsChange: (count: number) => updateNodeData(node.id, { numberOfOutputs: count }),
+              onViewTypeChange: (type: '3d' | 'room') => updateNodeData(node.id, { viewType: type }),
+              onCameraChange: (camera: any) => updateNodeData(node.id, { cameraAngle: camera }),
+              onLightingChange: (lighting: any) => updateNodeData(node.id, { lighting }),
+            },
+          };
+        }
+        return node;
+      });
+
+      setNodes(hydratedNodes as Node<InputNodeData | OutputNodeData>[]);
+      
       const maxId = storeNodes.reduce((max, node) => {
         const match = node.id.match(/-(?:input|output)-(\d+)/);
         if (match) {
@@ -504,6 +461,14 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
     );
   };
 
+
+  if (isCanvasLoading) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#0B0C0E] text-white/50">
+        <Loader2 className="w-8 h-8 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full h-full relative">

@@ -1,21 +1,14 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
-import { motion } from 'framer-motion';
-import { Upload, Wand2, Zap, ArrowRight, LayoutGrid, Clock } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Upload, Zap, ArrowRight, LayoutGrid, Clock, Send, Image as ImageIcon, X, Palette, Sparkles, Layers } from 'lucide-react';
 import { Header } from '@/components/header';
-import { getUserProjects } from '@/app/actions/project';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { getUserProjects, createProject } from '@/app/actions/project';
 import { Button } from '@/components/ui/button';
+import { COLOR_PALETTES, INTERIOR_STYLES, MATERIALS } from '@/lib/constants';
 
 type Project = {
   id: string;
@@ -27,12 +20,21 @@ type Project = {
 export default function HomePage() {
   const router = useRouter();
   const { data: session } = useSession();
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  
+  // Input State
   const [prompt, setPrompt] = useState('');
-  const [colors, setColors] = useState<string[]>(['#06b6d4', '#8b5cf6', '#ec4899', '#f59e0b']);
-  const [colorInputs, setColorInputs] = useState<string[]>(['#06b6d4', '#8b5cf6', '#ec4899', '#f59e0b']);
+  const [isInputFocused, setIsInputFocused] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Options State
+  const [colors, setColors] = useState<string[]>(Object.values(COLOR_PALETTES[0].colors).slice(0, 4));
+  const [selectedStyleId, setSelectedStyleId] = useState<string>('');
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string>('');
+  
   const [isGenerating, setIsGenerating] = useState(false);
 
   useEffect(() => {
@@ -52,114 +54,103 @@ export default function HomePage() {
     }
   }, [session]);
 
-  const handleStart = () => {
-    router.push('/editor/1');
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setFilePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+      setIsInputFocused(true);
+    }
   };
 
-  const handleDescribeClick = () => {
-    setIsDialogOpen(true);
+  const removeFile = () => {
+    setSelectedFile(null);
+    setFilePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSubmitPrompt = async () => {
-    if (!prompt.trim() || isGenerating) return;
+  const handleSubmit = async () => {
+    if ((!prompt.trim() && !selectedFile) || isGenerating) return;
 
     setIsGenerating(true);
     
     try {
+      // enhanced Prompt
+      const styleObj = INTERIOR_STYLES.find(s => s.id === selectedStyleId);
+      const materialObj = MATERIALS.find(m => m.id === selectedMaterialId);
+      
+      let fullPrompt = prompt;
+      if (styleObj) fullPrompt += ` Style: ${styleObj.label}.`;
+      if (materialObj) fullPrompt += ` Material: ${materialObj.label}.`;
+
       // Step 1: Create a new project
-      const projectResponse = await fetch('/api/projects', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `Project: ${prompt.substring(0, 50)}...`,
-        }),
-      });
+      const project = await createProject(`Project: ${prompt.substring(0, 50) || 'Untitled'}...`);
 
-      if (!projectResponse.ok) {
-        throw new Error('Failed to create project');
-      }
-
-      const project = await projectResponse.json();
+      if (!project) throw new Error('Failed to create project');
       const projectId = project.id;
 
-      // Step 2: Generate JSON prompt from description and colors
-      const jsonPromptResponse = await fetch('/api/scene/generate-json', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'generate',
-          prompt: prompt,
-          theme: {
-            colors: colors,
-            description: prompt,
-          },
-        }),
+      let imageUrl = null;
+
+      // Handle File Upload or Generation
+      if (selectedFile && filePreview) {
+        // Use uploaded file as base
+        // Note: In production, upload this to storage and get URL
+        imageUrl = filePreview;
+      } else {
+        // Generate from scratch if no file
+        // Step 2: Generate JSON prompt
+        // Dynamically import to avoid server-on-client errors if not careful, 
+        // though nextjs usually handles imports from 'actions' fine in client components.
+        // But for clarity we import at top usually. I will import at top.
+        const { generateSceneJson, renderScene } = await import('@/app/actions/scene');
+        
+        const jsonPromptData = await generateSceneJson({
+            type: 'generate',
+            prompt: fullPrompt,
+            theme: {
+              colors: colors,
+              description: fullPrompt,
+              style: styleObj?.label || '',
+              material: materialObj?.label || ''
+            },
+        });
+
+        const jsonPrompt = jsonPromptData.json_prompt;
+
+        // Step 3: Render the image
+        const renderData = await renderScene({
+            json_prompt: jsonPrompt,
+            seed: 5555,
+            steps: 50,
+            aspect_ratio: '1:1',
+            guidance_scale: 5,
+            variants: 1,
+        });
+
+        imageUrl = renderData.images[0];
+      }
+
+      if (!imageUrl) throw new Error('No image URL available');
+
+      // Use the selected style ID directly as it should now match or be mapped
+      const validEnumStyles = ['general', 'boho', 'industrial', 'minimalist', 'modern'];
+      const interiorStyle = validEnumStyles.includes(selectedStyleId) ? selectedStyleId : 'general';
+
+      // Step 4: Update Project with generated/uploaded image and settings
+      const { updateProject } = await import('@/app/actions/project');
+      await updateProject(projectId, {
+          baseImage: imageUrl,
+          colorPalette: colors,
+          interiorStyle: interiorStyle as any,
+          // materials is expecting string[] in schema? schema usually has string[] or json.
+          // In previous code `materials: selectedMaterialId ? [selectedMaterialId] : []`.
+          // Let's verify schema type if possible, but assuming string array based on usage.
+          materials: selectedMaterialId ? [selectedMaterialId] : [],
       });
-
-      if (!jsonPromptResponse.ok) {
-        throw new Error('Failed to generate JSON prompt');
-      }
-
-      const jsonPromptData = await jsonPromptResponse.json();
-      const jsonPrompt = jsonPromptData.json_prompt;
-
-      // Step 3: Render the image using the JSON prompt
-      const renderResponse = await fetch('/api/scene/render', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          json_prompt: jsonPrompt,
-          seed: 5555,
-          steps: 50,
-          aspect_ratio: '1:1',
-          guidance_scale: 5,
-          variants: 1,
-        }),
-      });
-
-      if (!renderResponse.ok) {
-        throw new Error('Failed to render image');
-      }
-
-      const renderData = await renderResponse.json();
-      const imageUrl = renderData.images[0];
-
-      if (!imageUrl) {
-        throw new Error('No image URL returned from render');
-      }
-
-      // Step 4: Create the first version with the rendered image
-      const versionResponse = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: projectId,
-          parentVersionId: null,
-          imageUrl: imageUrl, // Pass the rendered image URL
-          config: {
-            ...jsonPrompt,
-            style: jsonPromptData.style,
-            colors: colors,
-            prompt: prompt,
-          },
-        }),
-      });
-
-      if (!versionResponse.ok) {
-        throw new Error('Failed to create version');
-      }
-
-      // Step 5: Update the version with the actual rendered image
-      // Note: The /api/generate endpoint creates a version, but we need to update it with the actual image
-      // For now, we'll navigate to the editor. The version will be created by /api/generate
-      // In a production setup, you'd want to update the version with the correct imageUrl
-
-      // Close dialog and reset
-      setIsDialogOpen(false);
-      setPrompt('');
-      const defaultColors = ['#06b6d4', '#8b5cf6', '#ec4899', '#f59e0b'];
-      setColors(defaultColors);
-      setColorInputs(defaultColors);
 
       // Navigate to editor
       router.push(`/editor/${projectId}`);
@@ -175,20 +166,6 @@ export default function HomePage() {
     const newColors = [...colors];
     newColors[index] = color;
     setColors(newColors);
-    const newInputs = [...colorInputs];
-    newInputs[index] = color;
-    setColorInputs(newInputs);
-  };
-
-  const updateColorInput = (index: number, value: string) => {
-    const newInputs = [...colorInputs];
-    newInputs[index] = value;
-    setColorInputs(newInputs);
-    
-    // Update color if valid hex
-    if (/^#[0-9A-F]{6}$/i.test(value)) {
-      updateColor(index, value);
-    }
   };
 
   return (
@@ -200,41 +177,185 @@ export default function HomePage() {
       <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-cyan-500/10 rounded-full blur-[128px] pointer-events-none" />
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col items-center justify-start py-20 px-8 relative z-10">
+      <main className="flex-1 flex flex-col items-center justify-start py-20 px-8 relative z-10 w-full max-w-5xl mx-auto">
         
-        {/* Cards Container */}
-        <div className="flex gap-8 w-full max-w-4xl">
-          
-          {/* Card 1: Upload */}
-          <motion.div 
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleStart}
-            className="flex-1 h-[400px] bg-[#15171B]/80 backdrop-blur-md border border-white/5 rounded-3xl flex flex-col items-center justify-center cursor-pointer group hover:border-cyan-500/50 transition-all shadow-2xl"
-          >
-            <div className="w-20 h-20 mb-6 rounded-2xl bg-[#1E2128] flex items-center justify-center group-hover:bg-cyan-500/20 transition-colors">
-              <Upload className="w-10 h-10 text-cyan-400" />
-            </div>
-            <h2 className="text-2xl font-medium text-white mb-2">Upload Floor Plan</h2>
-            <p className="text-white/40">Supports .JPG, PNG, .PDF</p>
-          </motion.div>
+        {/* Hero Section */}
+        <div className="text-center mb-12">
+          <h1 className="text-4xl md:text-5xl font-semibold text-white mb-4 bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
+            Design your dream space
+          </h1>
+          <p className="text-lg text-white/40 max-w-2xl mx-auto">
+            Upload a floor plan or describe your vision. AI will generate the layout, style, and materials for you.
+          </p>
+        </div>
 
-          {/* Card 2: Describe */}
+        {/* Search/input Container */}
+        <div className="w-full max-w-3xl relative z-20">
           <motion.div 
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={handleDescribeClick}
-            className="flex-1 h-[400px] bg-[#15171B]/80 backdrop-blur-md border border-white/5 rounded-3xl flex flex-col items-center justify-center cursor-pointer group hover:border-cyan-500/50 transition-all shadow-2xl"
+            className={`
+              relative bg-[#15171B]/95 backdrop-blur-xl border transition-all duration-300 rounded-3xl overflow-hidden
+              ${isInputFocused || prompt || selectedFile ? 'border-cyan-500/40 shadow-[0_0_50px_-15px_rgba(6,182,212,0.1)]' : 'border-white/10 hover:border-white/20'}
+            `}
+            initial={false}
+            animate={{ height: 'auto' }}
           >
-            <div className="w-20 h-20 mb-6 rounded-2xl bg-[#1E2128] flex items-center justify-center group-hover:bg-cyan-500/20 transition-colors">
-              <Wand2 className="w-10 h-10 text-cyan-400" />
-            </div>
-            <h2 className="text-2xl font-medium text-white mb-2">Describe Layout</h2>
-            <div className="w-48 h-1 bg-white/10 mt-4 rounded-full overflow-hidden">
-              <div className="w-1/3 h-full bg-cyan-500/50" />
-            </div>
-          </motion.div>
+            {/* File Preview */}
+            <AnimatePresence>
+              {selectedFile && filePreview && (
+                <motion.div 
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="px-4 pt-4"
+                >
+                  <div className="relative inline-block group">
+                    <img src={filePreview} alt="Upload preview" className="h-24 w-auto rounded-lg border border-white/10 object-cover" />
+                    <button 
+                      onClick={removeFile}
+                      className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
+            {/* Input Area */}
+            <div className="flex items-end gap-3 p-4">
+               {/* Enhanced Upload Button */}
+               <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="group flex items-center gap-2 p-3 pr-4 rounded-xl bg-white/5 hover:bg-white/10 text-white/60 hover:text-cyan-400 transition-all border border-transparent hover:border-white/10 flex-shrink-0"
+                title="Upload Floor Plan"
+              >
+                <div className="w-8 h-8 rounded-lg bg-black/20 flex items-center justify-center group-hover:bg-cyan-500/10 transition-colors">
+                  <Upload className="w-4 h-4" />
+                </div>
+                <span className="text-sm font-medium">Upload Plan</span>
+                <input 
+                  ref={fileInputRef}
+                  type="file" 
+                  accept="image/*,.pdf"
+                  className="hidden"
+                  onChange={handleFileSelect}
+                />
+              </button>
+              
+              <div className="flex-1 min-w-0 bg-black/10 rounded-xl border border-white/5 px-3 focus-within:border-cyan-500/30 transition-colors">
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onFocus={() => setIsInputFocused(true)}
+                  placeholder="Describe your layout..."
+                  className="w-full bg-transparent border-none focus:ring-0 focus:outline-none text-white placeholder:text-white/30 text-sm resize-none py-3 min-h-[56px] max-h-48"
+                  rows={Math.min(Math.max(prompt.split('\n').length, 1), 5)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSubmit();
+                    }
+                  }}
+                />
+              </div>
+
+              <Button
+                onClick={handleSubmit}
+                disabled={(!prompt.trim() && !selectedFile) || isGenerating}
+                className={`
+                  h-[56px] w-[56px] rounded-xl transition-all duration-300 flex-shrink-0 p-0 flex items-center justify-center
+                  ${(prompt.trim() || selectedFile) && !isGenerating ? 'bg-cyan-500 text-white hover:bg-cyan-400 shadow-[0_0_20px_-5px_rgba(6,182,212,0.4)]' : 'bg-white/5 text-white/20'}
+                `}
+              >
+                {isGenerating ? <div className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <Send className="w-6 h-6" />}
+              </Button>
+            </div>
+
+            {/* Expanded Options */}
+            <AnimatePresence>
+              {(isInputFocused || prompt || selectedFile) && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="border-t border-white/5 bg-[#0F1115]/50"
+                >
+                  <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-8">
+                    {/* Color Palette */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/40 uppercase tracking-wider">
+                        <Palette className="w-3 h-3" /> Color Palette
+                      </div>
+                      <div className="flex gap-3">
+                        {colors.map((color, i) => (
+                          <div key={i} className="relative group">
+                            <input
+                              type="color"
+                              value={color}
+                              onChange={(e) => updateColor(i, e.target.value)}
+                              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                            />
+                            <div 
+                              className="w-10 h-10 rounded-full border-2 border-white/10 group-hover:scale-110 group-hover:border-white/30 transition-all shadow-lg"
+                              style={{ backgroundColor: color }} 
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Style Selection */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/40 uppercase tracking-wider">
+                        <Sparkles className="w-3 h-3" /> Style
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {INTERIOR_STYLES.slice(0, 6).map(style => (
+                          <button
+                            key={style.id}
+                            onClick={() => setSelectedStyleId(selectedStyleId === style.id ? '' : style.id)}
+                            className={`
+                              px-3 py-1.5 rounded-full text-xs font-medium border transition-all flex items-center gap-1.5
+                              ${selectedStyleId === style.id 
+                                ? 'bg-cyan-500/10 border-cyan-500/50 text-cyan-400' 
+                                : 'bg-white/5 border-white/5 text-white/50 hover:border-white/20 hover:text-white'}
+                            `}
+                          >
+                            <span>{style.icon}</span>
+                            {style.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Material Selection */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-xs font-medium text-white/40 uppercase tracking-wider">
+                        <Layers className="w-3 h-3" /> Material
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {MATERIALS.slice(0, 6).map(material => (
+                          <button
+                            key={material.id}
+                            onClick={() => setSelectedMaterialId(selectedMaterialId === material.id ? '' : material.id)}
+                            className={`
+                              px-3 py-1.5 rounded-full text-xs font-medium border transition-all flex items-center gap-1.5
+                              ${selectedMaterialId === material.id 
+                                ? 'bg-purple-500/10 border-purple-500/50 text-purple-400' 
+                                : 'bg-white/5 border-white/5 text-white/50 hover:border-white/20 hover:text-white'}
+                            `}
+                          >
+                            <span>{material.icon}</span>
+                            {material.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
         </div>
 
         {/* History List Section */}
@@ -243,9 +364,9 @@ export default function HomePage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="w-full max-w-6xl mt-16"
+            className="w-full max-w-6xl mt-20"
           >
-            <div className="flex items-center gap-2 mb-6">
+            <div className="flex items-center gap-2 mb-6 px-2">
               <Clock className="w-5 h-5 text-cyan-400" />
               <h2 className="text-xl font-medium text-white">Your Projects</h2>
             </div>
@@ -291,7 +412,7 @@ export default function HomePage() {
         )}
 
         {/* Footer Badge */}
-        <div className="mt-12">
+        <div className="mt-20 mb-8">
           <div className="px-6 py-3 rounded-full border border-cyan-500/30 bg-cyan-950/10 flex items-center gap-2">
             <Zap className="w-4 h-4 text-cyan-400 fill-cyan-400" />
             <span className="text-cyan-100 text-sm font-medium">Powered by FIBO JSON-Native Control</span>
@@ -299,122 +420,6 @@ export default function HomePage() {
         </div>
 
       </main>
-
-      <footer className="p-6 text-center text-white/20 text-sm">
-        Structura.ai — Designed for Architects & Innovators v1.0-alpha
-      </footer>
-
-      {/* Describe Layout Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="bg-[#15171B] border-white/10 text-white max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="text-2xl font-medium text-white">
-              Describe Your Layout
-            </DialogTitle>
-            <DialogDescription className="text-white/60">
-              Enter a detailed description of the layout you want to create. Be as specific as possible about rooms, dimensions, and features.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 space-y-6">
-            <div>
-              <label className="text-sm font-medium text-white/90 mb-2 block">
-                Layout Description
-              </label>
-              <textarea
-                placeholder="e.g., A 3-bedroom apartment with an open kitchen, living room, and two bathrooms..."
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && e.metaKey) {
-                    e.preventDefault();
-                    handleSubmitPrompt();
-                  }
-                }}
-                rows={6}
-                className="w-full rounded-md border border-white/10 bg-[#1E2128] px-3 py-2 text-white placeholder:text-white/40 focus-visible:border-cyan-500/50 focus-visible:ring-cyan-500/20 focus-visible:ring-[3px] outline-none resize-none transition-[color,box-shadow]"
-              />
-            </div>
-            
-            <div>
-              <label className="text-sm font-medium text-white/90 mb-3 block">
-                Color Palette (4 colors)
-              </label>
-              <div className="flex gap-4">
-                {colors.map((color, index) => (
-                  <div key={index} className="flex-1">
-                    <div className="relative group">
-                      <div
-                        className="w-full h-16 rounded-lg border-2 border-white/20 cursor-pointer transition-all hover:border-cyan-500/50 hover:scale-105"
-                        style={{ backgroundColor: color }}
-                        onClick={() => {
-                          const input = document.getElementById(`color-${index}`) as HTMLInputElement;
-                          input?.click();
-                        }}
-                      />
-                      <input
-                        id={`color-${index}`}
-                        type="color"
-                        value={color}
-                        onChange={(e) => updateColor(index, e.target.value)}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                      />
-                      <div className="mt-2 text-center">
-                        <input
-                          type="text"
-                          value={colorInputs[index]}
-                          onChange={(e) => {
-                            const value = e.target.value;
-                            // Allow typing hex codes (with or without #)
-                            if (/^#?[0-9A-F]{0,6}$/i.test(value)) {
-                              const hexValue = value.startsWith('#') ? value : `#${value}`;
-                              updateColorInput(index, hexValue);
-                            }
-                          }}
-                          onBlur={(e) => {
-                            const value = e.target.value;
-                            // Validate and fix on blur
-                            if (/^#?[0-9A-F]{6}$/i.test(value)) {
-                              const hexValue = value.startsWith('#') ? value : `#${value}`;
-                              updateColor(index, hexValue);
-                            } else {
-                              // Reset to current color if invalid
-                              updateColorInput(index, colors[index]);
-                            }
-                          }}
-                          className="w-full text-xs text-center bg-[#1E2128] border border-white/10 rounded px-2 py-1 text-white focus-visible:border-cyan-500/50 focus-visible:outline-none"
-                          placeholder="#000000"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsDialogOpen(false);
-                setPrompt('');
-                const defaultColors = ['#06b6d4', '#8b5cf6', '#ec4899', '#f59e0b'];
-                setColors(defaultColors);
-                setColorInputs(defaultColors);
-              }}
-              className="bg-transparent border-white/10 text-white hover:bg-white/10"
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSubmitPrompt}
-              disabled={!prompt.trim() || isGenerating}
-              className="bg-cyan-500 hover:bg-cyan-600 text-white border-cyan-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isGenerating ? 'Generating...' : 'Generate Layout'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
