@@ -1,4 +1,4 @@
-// Core Types for Structura.ai
+// Core Types for ArchFlow.ai
 
 export type VersionType = 'base' | 'style' | 'lighting' | 'sketch';
 

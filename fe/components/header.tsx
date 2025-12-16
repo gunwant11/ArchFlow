@@ -25,7 +25,7 @@ export function Header() {
         <div className="w-8 h-8 bg-gradient-to-br from-cyan-400 to-blue-600 rounded flex items-center justify-center">
           <LayoutGrid className="text-white w-5 h-5" />
         </div>
-        <span className="font-semibold text-lg tracking-tight text-white">Structura.ai</span>
+        <span className="font-semibold text-lg tracking-tight text-white">ArchFlow.ai</span>
       </div>
 
       <div className="flex items-center gap-4 text-white/60">

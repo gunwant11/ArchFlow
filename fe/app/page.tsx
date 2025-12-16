@@ -39,6 +39,14 @@ export default function HomePage() {
   
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // Suggested Input Example
+  const SUGGESTED_INPUT = {
+    imageUrl: 'https://pub-5774ad445c9041fdbcffcce48dbfdca0.r2.dev/uploads/1765844178760-f0293f3a-06d6-4b4f-a836-7cfa056a6269-Generated_Image_December_01__2025_-_12_37PM.png',
+    prompt: 'create this layout of home',
+    style: 'boho',
+    material: 'wood',
+  };
+
   useEffect(() => {
     if (session?.user) {
       const fetchProjects = async () => {
@@ -75,22 +83,32 @@ export default function HomePage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleSubmit = async () => {
-    if ((!prompt.trim() && !selectedFile) || isGenerating) return;
+  const handleSubmit = async (overrides?: {
+    prompt?: string;
+    styleId?: string;
+    materialId?: string;
+    referenceImageUrl?: string;
+  }) => {
+    const effectivePrompt = overrides?.prompt ?? prompt;
+    const effectiveStyleId = overrides?.styleId ?? selectedStyleId;
+    const effectiveMaterialId = overrides?.materialId ?? selectedMaterialId;
+    const effectiveReferenceUrl = overrides?.referenceImageUrl;
+
+    if ((!effectivePrompt.trim() && !selectedFile && !effectiveReferenceUrl) || isGenerating) return;
 
     setIsGenerating(true);
     
     try {
       // enhanced Prompt
-      const styleObj = INTERIOR_STYLES.find(s => s.id === selectedStyleId);
-      const materialObj = MATERIALS.find(m => m.id === selectedMaterialId);
+      const styleObj = INTERIOR_STYLES.find(s => s.id === effectiveStyleId);
+      const materialObj = MATERIALS.find(m => m.id === effectiveMaterialId);
       
-      let fullPrompt = prompt;
+      let fullPrompt = effectivePrompt;
       if (styleObj) fullPrompt += ` Style: ${styleObj.label}.`;
       if (materialObj) fullPrompt += ` Material: ${materialObj.label}.`;
 
       // Step 1: Create a new project
-      const project = await createProject(`Project: ${prompt.substring(0, 50) || 'Untitled'}...`);
+      const project = await createProject(`Project: ${effectivePrompt.substring(0, 50) || 'Untitled'}...`);
 
       if (!project) throw new Error('Failed to create project');
       const projectId = project.id;
@@ -99,8 +117,10 @@ export default function HomePage() {
       let referenceImageUrl = null;
       let jsonPrompt: Record<string, unknown> | undefined;
 
-      // 1. Handle File Upload if present
-      if (selectedFile) {
+      // 1. Handle File Upload or use provided reference URL
+      if (effectiveReferenceUrl) {
+        referenceImageUrl = effectiveReferenceUrl;
+      } else if (selectedFile) {
         try {
            const formData = new FormData();
            formData.append('file', selectedFile);
@@ -109,9 +129,6 @@ export default function HomePage() {
            referenceImageUrl = await uploadImage(formData);
         } catch (uploadError) {
            console.error('Failed to upload reference image', uploadError);
-           // Fallback? Or stop? Let's verify if we can proceed without it or warn.
-           // For now, if upload fails, we might just proceed without reference or fail.
-           // Let's proceed but maybe it affects result.
         }
       }
 
@@ -151,9 +168,9 @@ export default function HomePage() {
 
       if (!generatedImageUrl) throw new Error('No image URL available');
 
-      // Use the selected style ID directly as it should now match or be mapped
+      // Use the effective style ID directly as it should now match or be mapped
       const validEnumStyles = ['general', 'boho', 'industrial', 'minimalist', 'modern'];
-      const interiorStyle = validEnumStyles.includes(selectedStyleId) ? selectedStyleId : 'general';
+      const interiorStyle = validEnumStyles.includes(effectiveStyleId) ? effectiveStyleId : 'general';
 
       // Step 4: Update Project with generated/uploaded image and settings
       const { updateProject } = await import('@/app/actions/project');
@@ -169,7 +186,7 @@ export default function HomePage() {
           position: { x: 100, y: 100 },
           data: {
             label: 'Initial Input',
-            prompt: prompt,
+            prompt: effectivePrompt,
             numberOfOutputs: 1,
             viewType: '3d', // Default
             referenceImages: referenceImageUrl ? [referenceImageUrl] : [], 
@@ -207,9 +224,9 @@ export default function HomePage() {
 
       await updateProject(projectId, {
           baseImage: generatedImageUrl,
-          colorPalette: colors,
+          colorPalette: colors, // TODO: could use effectiveColors if we add that override
           interiorStyle: interiorStyle as any,
-          materials: selectedMaterialId ? [selectedMaterialId] : [],
+          materials: effectiveMaterialId ? [effectiveMaterialId] : [],
           canvasState: canvasState,
       });
 
@@ -249,6 +266,7 @@ export default function HomePage() {
             Upload a floor plan or describe your vision. AI will generate the layout, style, and materials for you.
           </p>
         </div>
+
 
         {/* Search/input Container */}
         <div className="w-full max-w-3xl relative z-20">
@@ -321,7 +339,7 @@ export default function HomePage() {
               </div>
 
               <Button
-                onClick={handleSubmit}
+                onClick={() => handleSubmit()}
                 disabled={(!prompt.trim() && !selectedFile) || isGenerating}
                 className={`
                   h-[56px] w-[56px] rounded-xl transition-all duration-300 flex-shrink-0 p-0 flex items-center justify-center
@@ -484,6 +502,65 @@ export default function HomePage() {
             </AnimatePresence>
           </motion.div>
         </div>
+
+        {/* Suggested Input Card */}
+        <motion.div 
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="w-full max-w-3xl mt-6"
+        >
+          <div className="flex items-center gap-2 mb-3 px-1">
+            <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="text-xs font-medium text-white/40 uppercase tracking-wider">Try this example</span>
+          </div>
+          <button
+            onClick={() => handleSubmit({
+              prompt: SUGGESTED_INPUT.prompt,
+              styleId: SUGGESTED_INPUT.style,
+              materialId: SUGGESTED_INPUT.material,
+              referenceImageUrl: SUGGESTED_INPUT.imageUrl,
+            })}
+            disabled={isGenerating}
+            className="w-full group relative bg-[#15171B]/80 hover:bg-[#1E2128] border border-white/5 hover:border-cyan-500/30 rounded-2xl p-4 transition-all duration-300 text-left disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <div className="flex items-center gap-4">
+              {/* Preview Image */}
+              <div className="relative w-20 h-20 flex-shrink-0 rounded-xl overflow-hidden border border-white/10 group-hover:border-cyan-500/30 transition-colors">
+                <img 
+                  src={SUGGESTED_INPUT.imageUrl} 
+                  alt="Example layout" 
+                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              </div>
+              
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-white/80 group-hover:text-white transition-colors mb-2">
+                  "{SUGGESTED_INPUT.prompt}"
+                </p>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                    <span>🌿</span> {SUGGESTED_INPUT.style}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    <span>🪵</span> {SUGGESTED_INPUT.material}
+                  </span>
+                </div>
+              </div>
+
+              {/* Arrow */}
+              <div className="w-10 h-10 rounded-full bg-white/5 group-hover:bg-cyan-500/20 flex items-center justify-center transition-all duration-300 flex-shrink-0">
+                {isGenerating ? (
+                  <div className="w-4 h-4 border-2 border-white/20 border-t-cyan-400 rounded-full animate-spin" />
+                ) : (
+                  <ArrowRight className="w-4 h-4 text-white/40 group-hover:text-cyan-400 transition-colors" />
+                )}
+              </div>
+            </div>
+          </button>
+        </motion.div>
 
         {/* History List Section */}
         {session?.user && (projects.length > 0 || isLoadingHistory) && (

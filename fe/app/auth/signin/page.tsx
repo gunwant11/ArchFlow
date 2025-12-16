@@ -31,7 +31,7 @@ function SignInContent() {
       <div className="w-full max-w-md">
         <div className="bg-[#15171B]/80 backdrop-blur-md border border-white/5 rounded-3xl p-8 shadow-2xl">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-semibold text-white mb-2">Welcome to Structura.ai</h1>
+            <h1 className="text-3xl font-semibold text-white mb-2">Welcome to ArchFlow.ai</h1>
             <p className="text-white/60">Sign in to continue</p>
           </div>
 
