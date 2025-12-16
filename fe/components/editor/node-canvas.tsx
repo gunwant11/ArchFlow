@@ -20,7 +20,14 @@ import { OutputGenerationNode, OutputNodeData } from './output-generation-node';
 import { NodeToolbar } from './node-toolbar';
 import { useProjectStore } from '@/store/use-project-store';
 import { useParams } from 'next/navigation';
-import { Plus, Loader2 } from 'lucide-react';
+import { Plus, Loader2, Download, Images } from 'lucide-react';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { generateSceneJson, renderScene } from '@/app/actions/scene';
 
@@ -161,8 +168,8 @@ export function NodeCanvas() {
       const hasReferences = inputData.referenceImages && inputData.referenceImages.length > 0;
       
       // Defaults
-      const lighting = inputData.lighting || { type: 'natural', intensity: 80 };
-      const camera = inputData.cameraAngle || { position: 'eye-level', fov: 75 };
+      const lighting = inputData.lighting || { type: 'daylight', intensity: 80 };
+      const camera = inputData.cameraAngle || { position: 'eye-level' };
       
       // Build enhanced prompt with global settings and view type
       const enhancedPrompt = `${inputData.prompt}. 
@@ -170,7 +177,7 @@ View: ${inputData.viewType || '3d'} view.
 Style: ${globalSettings.interiorStyle}. 
 Materials: ${globalSettings.materials.join(', ')}. 
 Lighting: ${lighting.type} with ${lighting.intensity}% intensity. 
-Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
+Camera: ${camera.position} angle.`;
 
       const generationConfig = {
         style: globalSettings.interiorStyle,
@@ -207,10 +214,38 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
       }
 
       // Step 1: Generate JSON from prompt
+      // Determine type based on context:
+      // - 'refine' if we have a previous structured prompt to modify
+      // - 'visualize' if viewType is 'room' (2D room view)
+      // - 'structure' if viewType is '3d' (3D isometric layout)
+      let generationType: 'structure' | 'visualize' | 'refine' = 'structure';
+      
+      if (previousStructuredPrompt) {
+        generationType = 'refine';
+      } else if (inputData.viewType === 'room') {
+        generationType = 'visualize';
+      } else {
+        generationType = 'structure';
+      }
+      
       const jsonPromptData = await generateSceneJson({
-          type: hasReferences ? 'refine' : 'generate',
+          type: generationType,
           prompt: enhancedPrompt,
           json_prompt: generationConfig,
+          structured_prompt: previousStructuredPrompt,
+          // Pass camera and lighting directly for prompt builders
+          camera: camera,
+          lighting: lighting,
+          // Pass reference image if available
+          reference_image: previousImageUrl || (hasReferences ? inputData.referenceImages![0] : undefined),
+          // Pass style for the prompt builder
+          style: globalSettings.interiorStyle,
+          // Theme includes colors and materials
+          theme: {
+            colors: globalSettings.colorPalette,
+            materials: globalSettings.materials,
+            style: globalSettings.interiorStyle,
+          },
           parent_id: null,
       });
 
@@ -404,8 +439,8 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
         prompt: '',
         numberOfOutputs: 1,
         viewType: '3d',
-        cameraAngle: { position: 'eye-level', fov: 75 },
-        lighting: { type: 'natural', intensity: 80 },
+        cameraAngle: { position: 'eye-level' },
+        lighting: { type: 'daylight', intensity: 80 },
         referenceImages: [],
         onRun: () => handleRunInputNode(newNodeId),
         onPromptChange: (prompt) => updateNodeData(newNodeId, { prompt }),
@@ -529,6 +564,67 @@ Camera: ${camera.position} angle with ${camera.fov}° FOV.`;
 
       {/* Top-Right Controls */}
       <div className="absolute top-4 right-4 z-10 flex gap-3">
+        {/* Outputs Modal */}
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button
+              variant="outline"
+              className="bg-[#1E2128] border-white/10 hover:bg-[#2A2F3A] hover:border-white/20 text-white shadow-lg h-11"
+            >
+              <Images className="w-4 h-4 mr-2" />
+              Outputs
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="bg-[#15171B] border-white/10 text-white max-w-4xl max-h-[80vh] overflow-hidden">
+            <DialogHeader>
+              <DialogTitle className="text-white">All Outputs</DialogTitle>
+            </DialogHeader>
+            <div className="overflow-y-auto max-h-[60vh] pr-2">
+              {nodes.filter(n => n.type === 'outputNode' && (n.data as OutputNodeData).imageUrl).length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-16 text-white/40">
+                  <Images className="w-12 h-12 mb-4 opacity-50" />
+                  <p>No output images yet</p>
+                  <p className="text-sm mt-1">Run a generation to see outputs here</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {nodes
+                    .filter(n => n.type === 'outputNode' && (n.data as OutputNodeData).imageUrl)
+                    .map((node) => {
+                      const outputData = node.data as OutputNodeData;
+                      return (
+                        <div key={node.id} className="relative group rounded-xl overflow-hidden border border-white/10 bg-black/20">
+                          <img 
+                            src={outputData.imageUrl!} 
+                            alt={outputData.label || 'Output'} 
+                            className="w-full aspect-square object-cover"
+                          />
+                          {/* Download Button Overlay */}
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors">
+                            <a
+                              href={outputData.imageUrl!}
+                              download={`output-${node.id}.png`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="absolute bottom-3 right-3 p-2 rounded-lg bg-white/10 backdrop-blur-sm border border-white/20 text-white opacity-0 group-hover:opacity-100 hover:bg-white/20 transition-all"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <Download className="w-4 h-4" />
+                            </a>
+                          </div>
+                          {/* Label */}
+                          <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                            <p className="text-xs text-white/80 truncate">{outputData.label}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Button
           onClick={handleAddNode}
           className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg h-11"

@@ -18,10 +18,9 @@ export type InputNodeData = {
   viewType?: '3d' | 'room';
   cameraAngle?: {
     position: string;
-    fov: number;
   };
   lighting?: {
-    type: 'natural' | 'warm' | 'cool' | 'dramatic' | 'soft';
+    type: 'daylight' | 'warm-ambient' | 'studio' | 'dramatic' | 'night';
     intensity: number;
   };
   isGenerating?: boolean;
@@ -31,23 +30,23 @@ export type InputNodeData = {
   onRemoveReferenceImage?: (index: number) => void;
   onOutputsChange?: (count: number) => void;
   onViewTypeChange?: (type: '3d' | 'room') => void;
-  onCameraChange?: (camera: { position: string; fov: number }) => void;
-  onLightingChange?: (lighting: { type: 'natural' | 'warm' | 'cool' | 'dramatic' | 'soft'; intensity: number }) => void;
+  onCameraChange?: (camera: { position: string }) => void;
+  onLightingChange?: (lighting: { type: 'daylight' | 'warm-ambient' | 'studio' | 'dramatic' | 'night'; intensity: number }) => void;
 };
 
 const CAMERA_POSITIONS = [
-  { id: 'eye-level', label: 'Eye Level' },
-  { id: 'birds-eye', label: 'Birds Eye' },
-  { id: 'low-angle', label: 'Low Angle' },
-  { id: 'corner', label: 'Corner' },
+  { id: 'eye-level', label: 'Eye-Level View' },
+  { id: 'top-view', label: 'Top View' },
+  { id: 'corner', label: 'Corner View' },
+  { id: 'wide-angle', label: 'Wide-Angle View' },
 ];
 
 const LIGHTING_TYPES = [
-  { id: 'natural', label: 'Natural', icon: '☀️' },
-  { id: 'warm', label: 'Warm', icon: '🔥' },
-  { id: 'cool', label: 'Cool', icon: '❄️' },
+  { id: 'daylight', label: 'Daylight', icon: '☀️' },
+  { id: 'warm-ambient', label: 'Warm Ambient', icon: '🔥' },
+  { id: 'studio', label: 'Studio', icon: '💡' },
   { id: 'dramatic', label: 'Dramatic', icon: '🌙' },
-  { id: 'soft', label: 'Soft', icon: '✨' },
+  { id: 'night', label: 'Night', icon: '🌃' },
 ];
 
 export const InputGenerationNode = memo(({ data, selected }: NodeProps<Node<InputNodeData>>) => {
@@ -83,8 +82,8 @@ export const InputGenerationNode = memo(({ data, selected }: NodeProps<Node<Inpu
   const hasReferenceImages = data.referenceImages && data.referenceImages.length > 0;
 
   // Defaults if not provided (safety)
-  const camera = data.cameraAngle || { position: 'eye-level', fov: 75 };
-  const lighting = data.lighting || { type: 'natural', intensity: 80 };
+  const camera = data.cameraAngle || { position: 'eye-level' };
+  const lighting = data.lighting || { type: 'daylight', intensity: 80 };
 
   return (
     <div 
@@ -263,7 +262,7 @@ export const InputGenerationNode = memo(({ data, selected }: NodeProps<Node<Inpu
                   {CAMERA_POSITIONS.map((pos) => (
                     <button
                       key={pos.id}
-                      onClick={() => data.onCameraChange?.({ ...camera, position: pos.id })}
+                      onClick={() => data.onCameraChange?.({ position: pos.id })}
                       className={cn(
                         "py-1.5 px-2 rounded border text-[10px] transition-all truncate",
                         camera.position === pos.id
@@ -274,19 +273,6 @@ export const InputGenerationNode = memo(({ data, selected }: NodeProps<Node<Inpu
                       {pos.label}
                     </button>
                   ))}
-                </div>
-                
-                <div className="flex items-center gap-2 pt-1">
-                   <span className="text-[10px] text-white/40 min-w-[30px]">FOV</span>
-                   <Slider
-                      value={[camera.fov]}
-                      onValueChange={(val) => data.onCameraChange?.({ ...camera, fov: val[0] })}
-                      min={30}
-                      max={120}
-                      step={5}
-                      className="flex-1"
-                    />
-                    <span className="text-[10px] text-white/60 w-[24px] text-right">{camera.fov}°</span>
                 </div>
               </div>
 

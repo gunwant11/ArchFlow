@@ -31,9 +31,11 @@ export default function HomePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Options State
+  const [selectedPaletteIndex, setSelectedPaletteIndex] = useState<number | 'custom'>(0);
   const [colors, setColors] = useState<string[]>(Object.values(COLOR_PALETTES[0].colors).slice(0, 4));
   const [selectedStyleId, setSelectedStyleId] = useState<string>('');
   const [selectedMaterialId, setSelectedMaterialId] = useState<string>('');
+  const [isPaletteDropdownOpen, setIsPaletteDropdownOpen] = useState(false);
   
   const [isGenerating, setIsGenerating] = useState(false);
 
@@ -93,48 +95,61 @@ export default function HomePage() {
       if (!project) throw new Error('Failed to create project');
       const projectId = project.id;
 
-      let imageUrl = null;
+      let generatedImageUrl = null;
+      let referenceImageUrl = null;
+      let jsonPrompt: Record<string, unknown> | undefined;
 
-      // Handle File Upload or Generation
-      if (selectedFile && filePreview) {
-        // Use uploaded file as base
-        // Note: In production, upload this to storage and get URL
-        imageUrl = filePreview;
-      } else {
-        // Generate from scratch if no file
-        // Step 2: Generate JSON prompt
-        // Dynamically import to avoid server-on-client errors if not careful, 
-        // though nextjs usually handles imports from 'actions' fine in client components.
-        // But for clarity we import at top usually. I will import at top.
-        const { generateSceneJson, renderScene } = await import('@/app/actions/scene');
-        
-        const jsonPromptData = await generateSceneJson({
-            type: 'generate',
-            prompt: fullPrompt,
-            theme: {
-              colors: colors,
-              description: fullPrompt,
-              style: styleObj?.label || '',
-              material: materialObj?.label || ''
-            },
-        });
-
-        const jsonPrompt = jsonPromptData.json_prompt;
-
-        // Step 3: Render the image
-        const renderData = await renderScene({
-            json_prompt: jsonPrompt,
-            seed: 5555,
-            steps: 50,
-            aspect_ratio: '1:1',
-            guidance_scale: 5,
-            variants: 1,
-        });
-
-        imageUrl = renderData.images[0];
+      // 1. Handle File Upload if present
+      if (selectedFile) {
+        try {
+           const formData = new FormData();
+           formData.append('file', selectedFile);
+           // Dynamically import upload action
+           const { uploadImage } = await import('@/app/actions/upload');
+           referenceImageUrl = await uploadImage(formData);
+        } catch (uploadError) {
+           console.error('Failed to upload reference image', uploadError);
+           // Fallback? Or stop? Let's verify if we can proceed without it or warn.
+           // For now, if upload fails, we might just proceed without reference or fail.
+           // Let's proceed but maybe it affects result.
+        }
       }
 
-      if (!imageUrl) throw new Error('No image URL available');
+      // 2. Generate JSON Prompt (Always)
+      const { generateSceneJson, renderScene } = await import('@/app/actions/scene');
+      
+      // First generation ALWAYS uses 'structure' (3D isometric layout)
+      // This creates the BASE SCENE that all subsequent views derive from
+      const generationType = 'structure';
+      
+      const jsonPromptData = await generateSceneJson({
+          type: generationType,
+          prompt: fullPrompt,
+          reference_image: referenceImageUrl || undefined, 
+          theme: {
+            colors: colors,
+            description: fullPrompt,
+            style: styleObj?.label || '',
+            material: materialObj?.label || ''
+          },
+      });
+
+      jsonPrompt = jsonPromptData.json_prompt;
+
+      // 3. Render Scene
+      const renderData = await renderScene({
+          json_prompt: jsonPrompt,
+          seed: 5555,
+          steps: 50,
+          aspect_ratio: '1:1',
+          guidance_scale: 5,
+          variants: 1,
+          image_url: referenceImageUrl, // Pass reference image as control
+      });
+
+      generatedImageUrl = renderData.images[0];
+
+      if (!generatedImageUrl) throw new Error('No image URL available');
 
       // Use the selected style ID directly as it should now match or be mapped
       const validEnumStyles = ['general', 'boho', 'industrial', 'minimalist', 'modern'];
@@ -142,14 +157,60 @@ export default function HomePage() {
 
       // Step 4: Update Project with generated/uploaded image and settings
       const { updateProject } = await import('@/app/actions/project');
+
+      // Construct initial canvas state
+      const inputId = crypto.randomUUID();
+      const outputId = crypto.randomUUID();
+      
+      const initialNodes = [
+        {
+          id: inputId,
+          type: 'inputNode',
+          position: { x: 100, y: 100 },
+          data: {
+            label: 'Initial Input',
+            prompt: prompt,
+            numberOfOutputs: 1,
+            viewType: '3d', // Default
+            referenceImages: referenceImageUrl ? [referenceImageUrl] : [], 
+          },
+        },
+        {
+          id: outputId,
+          type: 'outputNode',
+          position: { x: 600, y: 100 },
+          data: {
+            label: 'Output 1',
+            imageUrl: generatedImageUrl, 
+            config: jsonPrompt || {}, 
+            structuredPrompt: renderData.structuredPrompts?.[0],
+            generationTime: new Date().toLocaleTimeString(),
+          },
+        },
+      ];
+
+      const initialEdges = [
+        {
+          id: `edge-${inputId}-${outputId}`,
+          source: inputId,
+          target: outputId,
+          sourceHandle: 'output-0',
+          animated: true,
+          style: { stroke: '#06b6d4', strokeWidth: 2 },
+        },
+      ];
+
+      const canvasState = {
+        nodes: initialNodes,
+        edges: initialEdges,
+      };
+
       await updateProject(projectId, {
-          baseImage: imageUrl,
+          baseImage: generatedImageUrl,
           colorPalette: colors,
           interiorStyle: interiorStyle as any,
-          // materials is expecting string[] in schema? schema usually has string[] or json.
-          // In previous code `materials: selectedMaterialId ? [selectedMaterialId] : []`.
-          // Let's verify schema type if possible, but assuming string array based on usage.
           materials: selectedMaterialId ? [selectedMaterialId] : [],
+          canvasState: canvasState,
       });
 
       // Navigate to editor
@@ -281,27 +342,93 @@ export default function HomePage() {
                   className="border-t border-white/5 bg-[#0F1115]/50"
                 >
                   <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-8">
-                    {/* Color Palette */}
+                    {/* Color Palette Dropdown */}
                     <div className="space-y-3">
                       <div className="flex items-center gap-2 text-xs font-medium text-white/40 uppercase tracking-wider">
                         <Palette className="w-3 h-3" /> Color Palette
                       </div>
-                      <div className="flex gap-3">
-                        {colors.map((color, i) => (
-                          <div key={i} className="relative group">
-                            <input
-                              type="color"
-                              value={color}
-                              onChange={(e) => updateColor(i, e.target.value)}
-                              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                            />
-                            <div 
-                              className="w-10 h-10 rounded-full border-2 border-white/10 group-hover:scale-110 group-hover:border-white/30 transition-all shadow-lg"
-                              style={{ backgroundColor: color }} 
-                            />
+                      <div className="relative">
+                        <button
+                          onClick={() => setIsPaletteDropdownOpen(!isPaletteDropdownOpen)}
+                          className="w-full flex items-center justify-between gap-3 p-3 rounded-xl bg-white/5 hover:bg-white/10 text-white/80 border border-white/10 hover:border-white/20 transition-all"
+                        >
+                          <span className="text-sm">
+                            {selectedPaletteIndex === 'custom' ? 'Custom' : COLOR_PALETTES[selectedPaletteIndex]?.name}
+                          </span>
+                          <div className="flex gap-1.5">
+                            {colors.slice(0, 3).map((color, i) => (
+                              <div
+                                key={i}
+                                className="w-5 h-5 rounded-full border border-white/20"
+                                style={{ backgroundColor: color }}
+                              />
+                            ))}
                           </div>
-                        ))}
+                        </button>
+                        
+                        {/* Dropdown Panel */}
+                        {isPaletteDropdownOpen && (
+                          <div className="absolute top-full left-0 right-0 mt-2 bg-[#1E2128] border border-white/10 rounded-xl overflow-hidden shadow-xl z-50">
+                            {COLOR_PALETTES.map((palette, index) => (
+                              <button
+                                key={palette.name}
+                                onClick={() => {
+                                  setSelectedPaletteIndex(index);
+                                  setColors(Object.values(palette.colors).slice(0, 4));
+                                  setIsPaletteDropdownOpen(false);
+                                }}
+                                className={`w-full flex items-center justify-between p-3 hover:bg-white/5 transition-colors ${
+                                  selectedPaletteIndex === index ? 'bg-white/5' : ''
+                                }`}
+                              >
+                                <span className="text-sm text-white/80">{palette.name}</span>
+                                <div className="flex gap-1.5">
+                                  {Object.values(palette.colors).slice(0, 3).map((color, i) => (
+                                    <div
+                                      key={i}
+                                      className="w-5 h-5 rounded-full border border-white/20"
+                                      style={{ backgroundColor: color }}
+                                    />
+                                  ))}
+                                </div>
+                              </button>
+                            ))}
+                            {/* Custom Option */}
+                            <button
+                              onClick={() => {
+                                setSelectedPaletteIndex('custom');
+                                setIsPaletteDropdownOpen(false);
+                              }}
+                              className={`w-full flex items-center justify-between p-3 hover:bg-white/5 transition-colors border-t border-white/5 ${
+                                selectedPaletteIndex === 'custom' ? 'bg-white/5' : ''
+                              }`}
+                            >
+                              <span className="text-sm text-white/80">Custom</span>
+                              <span className="text-xs text-white/40">Pick your own</span>
+                            </button>
+                          </div>
+                        )}
                       </div>
+                      
+                      {/* Custom Color Pickers (only show when custom is selected) */}
+                      {selectedPaletteIndex === 'custom' && (
+                        <div className="flex gap-3 pt-2">
+                          {colors.map((color, i) => (
+                            <div key={i} className="relative group">
+                              <input
+                                type="color"
+                                value={color}
+                                onChange={(e) => updateColor(i, e.target.value)}
+                                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                              />
+                              <div 
+                                className="w-10 h-10 rounded-full border-2 border-white/10 group-hover:scale-110 group-hover:border-white/30 transition-all shadow-lg"
+                                style={{ backgroundColor: color }} 
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     {/* Style Selection */}
