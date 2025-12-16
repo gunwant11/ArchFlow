@@ -575,11 +575,11 @@ Camera: ${camera.position} angle.`;
               Outputs
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-[#15171B] border-white/10 text-white max-w-4xl max-h-[80vh] overflow-hidden">
+          <DialogContent className="bg-[#15171B] border-white/10 text-white max-w-6xl w-[90vw] max-h-[90vh] overflow-hidden">
             <DialogHeader>
-              <DialogTitle className="text-white">All Outputs</DialogTitle>
+              <DialogTitle className="text-white text-xl">All Outputs</DialogTitle>
             </DialogHeader>
-            <div className="overflow-y-auto max-h-[60vh] pr-2">
+            <div className="overflow-y-auto max-h-[75vh] pr-2">
               {nodes.filter(n => n.type === 'outputNode' && (n.data as OutputNodeData).imageUrl).length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-white/40">
                   <Images className="w-12 h-12 mb-4 opacity-50" />
@@ -587,7 +587,7 @@ Camera: ${camera.position} angle.`;
                   <p className="text-sm mt-1">Run a generation to see outputs here</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                   {nodes
                     .filter(n => n.type === 'outputNode' && (n.data as OutputNodeData).imageUrl)
                     .map((node) => {
