@@ -62,7 +62,7 @@ export default function HomePage() {
       };
       fetchProjects();
     }
-  }, [session]);
+  }, [session?.user?.email]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -95,6 +95,11 @@ export default function HomePage() {
     const effectiveReferenceUrl = overrides?.referenceImageUrl;
 
     if ((!effectivePrompt.trim() && !selectedFile && !effectiveReferenceUrl) || isGenerating) return;
+
+    if (!session) {
+      router.push('/auth/signin?callbackUrl=' + encodeURIComponent(window.location.href));
+      return;
+    }
 
     setIsGenerating(true);
     
@@ -572,7 +577,7 @@ export default function HomePage() {
           >
             <div className="flex items-center gap-2 mb-6 px-2">
               <Clock className="w-5 h-5 text-cyan-400" />
-              <h2 className="text-xl font-medium text-white">Your Projects</h2>
+              <h2 className="text-xl font-medium text-white">Recent Projects</h2>
             </div>
             
             {isLoadingHistory ? (

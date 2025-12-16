@@ -28,7 +28,7 @@ export async function getUserProjects() {
     const userProjects = await db
       .select()
       .from(projects)
-      .where(eq(projects.userId, session.user.id))
+      // .where(eq(projects.userId, session.user.id))
       .orderBy(desc(projects.createdAt));
 
     return userProjects.map(serializeProject);
